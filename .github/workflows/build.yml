@@ -1,0 +1,66 @@
+name: build
+
+# MSVC and the Windows 11 SDK are preinstalled on windows-latest, which is the
+# whole reason this exists: the engine is a native x64 DLL, and building it here
+# means nobody needs a multi-gigabyte local toolchain. See docs/SPEC.md 10.2.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Enforced rather than merely documented: src/core must build with no
+      # Windows SDK, or the core tests stop being runnable off-Windows.
+      - name: Enforce src/core stays Windows-free
+        shell: bash
+        run: |
+          if grep -rIn --include='*.h' --include='*.cpp' \
+               -e '#include <windows' -e '#include <Windows' src/core/; then
+            echo "::error::src/core must not include any Windows header"
+            exit 1
+          fi
+          echo "src/core is Windows-free."
+
+      - name: Configure
+        run: cmake --preset msvc-x64
+
+      - name: Build
+        run: cmake --build --preset msvc-x64
+
+      - name: Test
+        run: ctest --preset msvc-x64 --output-on-failure
+
+      # Proves the DLL is a real x64 module with a working export table before
+      # Task 11 depends on that.
+      - name: Inspect the engine DLL
+        shell: pwsh
+        run: |
+          $dll = "build/msvc-x64/dist/TaskbarStyler.dll"
+          if (-not (Test-Path $dll)) { throw "engine DLL was not produced" }
+          $bytes = [IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) {
+            # Format first: `throw "..." -f $x` parses the -f as a separate
+            # statement, so the message would be thrown unformatted.
+            $msg = "engine is not x64 (machine 0x{0:X4})" -f $machine
+            throw $msg
+          }
+          Write-Host "TaskbarStyler.dll is x64 ($((Get-Item $dll).Length) bytes)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskbarStyler
+          # Task 11 adds the four .bat control files to this artifact.
+          path: build/msvc-x64/dist/TaskbarStyler.dll
+          if-no-files-found: error

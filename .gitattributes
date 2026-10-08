@@ -1,0 +1,14 @@
+# LF everywhere by default, so Windows and CI agree on what changed.
+* text=auto eol=lf
+
+# cmd.exe is unreliable with LF-only batch files, and the .bat files are the
+# user-facing entry points. Keep them CRLF in the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Build output and binary data stay untouched.
+*.dll binary
+*.exe binary
+*.pdb binary
+*.png binary

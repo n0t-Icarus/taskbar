@@ -1,0 +1,8 @@
+build/
+.vs/
+.freebuff/
+CMakeUserPresets.json
+*.user
+*.suo
+
+__pycache__/
