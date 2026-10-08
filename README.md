@@ -1,7 +1,7 @@
 # TaskbarStyler
 
 A **standalone** version of the *Windows 11 Taskbar Styler* Windhawk mod. Run one
-app, pick a theme, get the styling — no Windhawk installation required.
+`.bat`, pick a theme, get the styling — no Windhawk, and nothing to install.
 
 This is an independent port. It is not affiliated with, endorsed by, or
 supported by Windhawk or the upstream mod author.
@@ -12,26 +12,35 @@ Windows 11's taskbar is XAML, so it can be restyled from inside `explorer.exe`.
 This project does that directly: a small engine DLL is injected into
 `explorer.exe` and applies theme rules to the live taskbar visual tree.
 
+```
+inject.bat     inject the engine and style the taskbar
+theme.bat      pick one of the 54 themes (numbered menu)
+status.bat     what is injected, which theme, any conflict
+eject.bat      revert the styling and remove the hooks
+```
+
 - **54 built-in themes** — the complete upstream theme pack, plus `None`.
-- **Live switching** — change theme from the tray; no explorer restart.
+- **Live switching** — change theme from `theme.bat`; no explorer restart.
 - **Click-through taskbar** — optional, useful with dock-style themes.
-- **Runs standalone** — no Windhawk, no additional runtime.
+- **Runs standalone** — one DLL and four batch files. No `.exe`, no installer, no
+  background tray process, no runtime.
 
 ## Status
 
 | Part | State |
 | --- | --- |
 | Theme pack extraction (`data/themes.json`) | **Done, machine-verified** — 54 themes, 2376 targets, 7149 styles |
-| Engine DLL (`TaskbarStyler.dll`) | Not started — blocked on a C++ toolchain, see below |
-| Tray host (`TaskbarStyler.exe`) | Not started |
+| Engine DLL (`TaskbarStyler.dll`) | Not started — one binary, also its own injector |
+| `.bat` control surface (`inject`/`eject`/`theme`/`status`) | Not started — replaces the tray host |
 | Design / spec | [docs/SPEC.md](docs/SPEC.md) |
 | Implementation plan | [docs/PLAN.md](docs/PLAN.md) |
 
 **Build blocker:** the engine must be a native x64 DLL running inside
-`explorer.exe` — there is no scripting or managed runtime alternative. No
-native toolchain is installed on this machine. Six delivery routes (CI build,
-local MSVC, Rust/GNU, driving Windhawk, .NET host, and one rejected) are
-compared in [docs/SPEC.md §10](docs/SPEC.md#10-build-and-delivery-routes).
+`explorer.exe` — there is no scripting or managed runtime alternative, so it has
+to be compiled. No compiler exists on this machine (checked exhaustively), and
+the local floor for one is ~2–3 GB, so the route is a **CI build that installs
+nothing locally**. Delivery routes are compared in
+[docs/SPEC.md §10](docs/SPEC.md#10-build-and-delivery-routes).
 
 ## Theme data
 
@@ -54,13 +63,14 @@ about the risks:
 
 - A bug can crash or hang the taskbar. The engine contains exceptions, reverts
   styles on unload, and stops injecting after 3 explorer crashes in 60 s.
-- Launching with **Shift held** starts the tray only, with no injection — use
-  this if a bad theme or config ever needs undoing.
+- `eject.bat` reverts the styling and removes the hooks without needing the
+  engine to be in a working state, so a bad theme or config is always one command
+  away from being undone.
 - Windows Defender may flag the injection once. **No evasion techniques** are
-  used; see the README section on unblocking if you trust the source and want it
-  to run.
+  used; [docs/UNBLOCKING.md](docs/UNBLOCKING.md) covers the legitimate exclusion
+  steps if you trust the source and want it to run.
 - It cannot coexist with other XAML-diagnostics consumers such as TranslucentTB
-  or ExplorerBlurMica. The app will tell you when it detects a conflict; it will
+  or ExplorerBlurMica. `status.bat` reports a conflict when it detects one; it will
   not quietly break the other program.
 - No telemetry. The upstream mod's usage reporting is removed, not disabled.
 

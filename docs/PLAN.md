@@ -4,7 +4,7 @@
 
 **Goal:** Ship the Windows 11 Taskbar Styler as a standalone tray app with its own injector and 54 built-in themes, running without Windhawk.
 
-**Architecture:** A native x64 engine DLL is injected into `explorer.exe`. It installs 7 `GetProcAddress`-based detours, registers a XAML-diagnostics visual-tree consumer, and applies theme rules to the live taskbar tree. A Win32 tray host owns the injector, the config, and explorer liveness. The engine's decision-making core (selector matching, style parsing, expression evaluation) is deliberately Windows-free so it can be unit-tested without explorer.
+**Architecture:** A native x64 engine DLL is injected into `explorer.exe`. It installs 7 `GetProcAddress`-based detours, registers a XAML-diagnostics visual-tree consumer, and applies theme rules to the live taskbar tree. **There is no host process and no `.exe`:** the same DLL exports its own injector and control verbs, and four `.bat` files drive them through `rundll32.exe`. The engine's decision-making core (selector matching, style parsing, expression evaluation) is deliberately Windows-free so it can be unit-tested without explorer.
 
 **Tech Stack:** C++20, MSVC x64 (MSBuild generator or Ninja), CMake ≥ 3.21, MinHook, C++/WinRT headers, doctest (vendored single header, MIT), Python 3 for the theme-data generator.
 
@@ -28,8 +28,10 @@ The five failure modes most likely to bite a user, each of which no task's tests
 fully exercise on their own:
 
 1. **Explorer restart while a theme is applied** — the user restarts explorer
-   (or it crashes) and comes back to a *default* taskbar with no indication
-   anything is wrong. Expected: styles reappear within a few seconds.
+   (or it crashes) and comes back to a *default* taskbar. With no host process
+   nothing is watching for this, so the failure mode is silence. Expected:
+   `status.bat` says plainly that the engine is no longer attached, and
+   re-running `inject.bat` restores the styling.
 2. **`explorer.exe` re-creating the taskbar window without the process
    restarting** — e.g. after a resolution or DPI change, the old window is gone
    and the new one is unstyled. Expected: still styled.
@@ -53,7 +55,7 @@ fully exercise on their own:
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: CMake target `ts_core` (static lib, Windows-free), `ts_engine` (DLL), `ts_host` (exe), `ts_tests` (exe). Preset `msvc-x64`.
+- Produces: CMake target `ts_core` (static lib, Windows-free), `ts_engine` (DLL — the only shipped binary), `ts_tests` (exe). Preset `msvc-x64`.
 
 This task exists to fail fast if the toolchain is missing (see SPEC §10.3).
 
@@ -577,7 +579,7 @@ git commit -m "feat(engine): register XAML diagnostics consumer and find the tas
 
 **Files:**
 - Create: `src/engine/reload_channel.h`, `src/engine/reload_channel.cpp`, `src/engine/safety.h`, `src/engine/safety.cpp`
-- Test: `tests/engine/test_safety.cpp`, `tests/host/test_reload_channel.cpp`
+- Test: `tests/engine/test_safety.cpp`, `tests/engine/test_reload_channel.cpp`
 
 **Interfaces:**
 - Consumes: `ParseConfigJson` (Task 6), `StyleApplier` (Task 8).
@@ -617,58 +619,79 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/engine/reload_channel.* src/engine/safety.* tests/engine tests/host
+git add src/engine/reload_channel.* src/engine/safety.* tests/engine
 git commit -m "feat(engine): live theme reload, crash kill switch and safe mode"
 ```
 
 ---
 
-### Task 11: Tray host
+### Task 11: Injector exports and the `.bat` control surface
 
 **Files:**
-- Create: `src/host/main.cpp`, `src/host/tray_icon.h`, `src/host/tray_icon.cpp`, `src/host/injector.h`, `src/host/injector.cpp`, `src/host/explorer_watcher.h`, `src/host/explorer_watcher.cpp`, `src/host/config_store.h`, `src/host/config_store.cpp`
-- Test: `tests/host/test_injector.cpp`, `tests/host/test_explorer_watcher.cpp`
+- Create: `src/engine/injector.h`, `src/engine/injector.cpp`, `src/engine/control_exports.h`, `src/engine/control_exports.cpp`, `src/engine/mode.h`, `src/engine/mode.cpp`
+- Create: `dist/inject.bat`, `dist/eject.bat`, `dist/theme.bat`, `dist/status.bat`
+- Test: `tests/engine/test_control.cpp`, `tests/engine/test_mode.cpp`
+- Modify: `CMakeLists.txt` (export the four verbs, add a `.def` file)
 
 **Interfaces:**
 - Consumes: `ParseConfigJson`/`SerializeConfigJson` (Task 6), `SignalReload()` (Task 10), generated theme list (Task 1).
 - Produces:
+  - `enum class ProcessMode { Engine, Control }; ProcessMode DetectProcessMode(std::wstring_view exeBaseName);`
   - `bool InjectDllIntoProcess(DWORD pid, const std::wstring& dllPath, std::wstring* error);`
-  - `class ExplorerWatcher { public: void Start(std::function<void(DWORD pid)> onStart, std::function<void()> onExit); void Stop(); };`
+  - `DWORD FindExplorerPid();`
   - `bool WriteThemeSelection(const std::wstring& themeId, std::wstring* error);`
-  - `bool SetRunAtLogon(bool enabled, std::wstring* error);`
+  - Four exports with the `rundll32` signature
+    `void CALLBACK Fn(HWND, HINSTANCE, LPSTR, int)`:
+    `Inject`, `Eject`, `SetTheme`, `Status`.
+
+`SetTheme` takes its argument from the `rundll32` command line, so `theme.bat`
+can pass an id with spaces or `&` in it as `SetTheme "Oversimplified&Accentuated"`.
 
 - [ ] **Step 1: Write the failing tests**
 
+- `DetectProcessMode(L"explorer")` is `Engine`; `DetectProcessMode(L"rundll32")` is
+  `Control`; anything else is `Control`, so an accidental load stays passive.
 - `WriteThemeSelection` changes only `theme` and preserves every other key,
   including unknown ones.
-- `WriteThemeSelection` rejects an id not in `ts::generated::kThemes`.
-- `ExplorerWatcher` fires `onStart` with a fresh explorer PID after the watched
-  process exits — the peer case for Review Focus #1.
-- `SetRunAtLogon(false)` then `(true)` is idempotent and writes to the per-user
-  `Run` key only (assert nothing under `HKLM` is touched).
+- `WriteThemeSelection` rejects an id not in `ts::generated::kThemes`, including
+  the empty string (that is `None`'s job, not an unknown-theme error).
+- `FindExplorerPid()` returns a live `explorer.exe` pid on this machine.
+- `SetTheme` with the id `Oversimplified&Accentuated` — the ampersand case from
+  `data/themes.json` — round-trips through the `LPSTR` command line intact.
+- Calling each export from a `rundll32`-shaped stub does not raise, and `Status`
+  writes a non-empty report even when nothing is injected.
 
 - [ ] **Step 2: Run and watch them fail**
 
-Run: `ctest --preset msvc-x64 -R "injector|explorer_watcher" --output-on-failure`
+Run: `ctest --preset msvc-x64 -R "control|mode" --output-on-failure`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-Tray via `Shell_NotifyIconW` with a menu built from `kThemes` plus `None`.
-Injection via `OpenProcess`/`VirtualAllocEx`/`WriteProcessMemory`/
-`CreateRemoteThread(LoadLibraryW)`. Single-instance via a named mutex;
-a second launch exits quietly.
+`Inject` via `OpenProcess`/`VirtualAllocEx`/`WriteProcessMemory`/
+`CreateRemoteThread(LoadLibraryW)`; `Eject` and `SetTheme` signal the named event
+from Task 10. Widen the `LPSTR` command line to UTF-16 with the true codepage
+rather than assuming ASCII. Export the four verbs with `extern "C"` and
+`__declspec(dllexport)`, and keep `DllMain` inert when the mode is `Control` so
+loading it under `rundll32` never starts the engine.
+
+`rundll32.exe` is a GUI-subsystem binary with no console, so `Status` cannot just
+write to stdout: it calls `AttachConsole(ATTACH_PARENT_PROCESS)` first and falls
+back to writing `%TEMP%\TaskbarStyler.status` for `status.bat` to `type`. Test the
+fallback path, since whether the parent console attaches is not guaranteed.
 
 - [ ] **Step 4: Verify**
 
-Run: `ctest --preset msvc-x64 -R "injector|explorer_watcher" --output-on-failure`
-Expected: PASS.
+Run: `ctest --preset msvc-x64 -R "control|mode" --output-on-failure`
+Expected: PASS. Then manually: `inject.bat` on a real explorer, confirm the log
+records the injection, `status.bat` reports the active theme, `theme.bat` switches
+it live, and `eject.bat` reverts.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/host tests/host
-git commit -m "feat(host): tray UI, DLL injector and explorer liveness watcher"
+git add src/engine/injector.* src/engine/control_exports.* src/engine/mode.* tests/engine dist
+git commit -m "feat(engine): injector and rundll32 control exports with bat front-end"
 ```
 
 ---
@@ -676,12 +699,13 @@ git commit -m "feat(host): tray UI, DLL injector and explorer liveness watcher"
 ### Task 12: End-to-end pass, packaging and GPL compliance
 
 **Files:**
-- Create: `docs/TESTING.md`, `docs/UNBLOCKING.md`, `installer/build.ps1`
+- Create: `docs/TESTING.md`, `docs/UNBLOCKING.md`, `.github/workflows/build.yml`
 - Modify: `README.md`, `docs/SPEC.md` (record new dependencies in §10.4)
 
 **Interfaces:**
 - Consumes: every previous task.
-- Produces: a `dist/` folder with `TaskbarStyler.exe`, `TaskbarStyler.dll`, and `LICENSE`.
+- Produces: a downloadable CI artifact (SPEC §10.2 route A) containing
+  `TaskbarStyler.dll`, the four `.bat` files, and `LICENSE`.
 
 - [ ] **Step 1: Write the manual test script**
 
@@ -712,6 +736,6 @@ Expected: no output.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs README.md installer dist
+git add docs README.md dist .github
 git commit -m "docs: testing ladder, AV unblocking guide and GPL compliance pass"
 ```
