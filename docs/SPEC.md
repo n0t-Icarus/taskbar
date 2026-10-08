@@ -409,3 +409,40 @@ than discovered in a linker error.
 
 All four are permissive and GPL-compatible. Anything not in this table must be
 added here before it is used.
+
+### 10.5 Rejected alternative: MinGW-w64 (measured)
+
+MinGW-w64 is the obvious way to dodge the MSVC download. It is roughly 300 MB,
+needs no elevation, and the sibling project `taskbar-volume-control` already
+builds a native Win32 exe with COM, DWM and GDI+ that way
+(`g++ ... -lole32 -loleaut32 -luuid -ldwmapi -lshcore`). That is a working
+precedent for the shape of this engine, so the option deserves a number rather
+than a shrug.
+
+The blocker is C++/WinRT, and as of this measurement it is counted, not assumed:
+
+| Metric | Value |
+| --- | --- |
+| Distinct `winrt/` headers | 20 |
+| `#include <winrt/...>` lines | 22 |
+| `winrt::` call sites | **397** |
+| `winrt::impl::abi_t` (deep internals) | 22 |
+
+That distribution is more favourable than the raw count suggests:
+`IInspectable` (32 uses) and `IPropertyValue` (25) are plain COM interfaces,
+`hstring` (40) and `hresult_error` (39) have trivial raw replacements, and
+`xamlom.h` — the XAML-diagnostics header the engine actually talks to — is pure
+C COM rather than WinRT. The genuinely WinRT-only runtime classes are few:
+`Uri` (6), `UISettings` (4), `DispatcherQueue` (4), `DispatcherQueueTimer` (4).
+
+It is still 397 call sites, a rewrite larger and riskier than the port itself,
+and `winrt::implements` / `auto_revoke` event revocation is fiddly to hand-roll
+correctly. **Conclusion: not worth it.** CI costs nothing and removes the need
+entirely.
+
+One trap if this is ever revisited: the non-MSVC branch of the root
+`CMakeLists.txt` sets `-Werror`, and the common Win32 idiom
+`WNDCLASSEXW wc{ sizeof(wc) }` trips `-Wmissing-field-initializers` under GCC.
+That warning is noise (the braces do zero the rest of the struct), but it would
+fail the build. The branch is currently unexercised because CI compiles with
+MSVC and `src/core` is the only thing that can build without a SDK.
