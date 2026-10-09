@@ -320,7 +320,8 @@ The question therefore splits into three separate ones:
 ### 10.2 Routes
 
 **A — Build in CI (GitHub Actions, `windows-latest`).**
-MSVC 2022 and the Windows SDK are preinstalled on the runner. Push, collect
+MSVC and the Windows SDK are preinstalled on the runner — Visual Studio 2026 as
+of 2026-10, see §10.6 for why nothing pins a version. Push, collect
 `TaskbarStyler.dll` and `.exe` as downloadable artifacts. Nothing installed
 locally, no elevation, no cost on a public repo (2,000 min/month when private).
 Cost: no local compile feedback — an edit is verified by pushing.
@@ -446,3 +447,35 @@ One trap if this is ever revisited: the non-MSVC branch of the root
 That warning is noise (the braces do zero the rest of the struct), but it would
 fail the build. The branch is currently unexercised because CI compiles with
 MSVC and `src/core` is the only thing that can build without a SDK.
+
+### 10.6 The runner image tracks Visual Studio, so nothing pins a generator
+
+`windows-latest` is a rolling label. In 2026 it became the *VS 2026* image
+(`windows-2025-vs2026`: Visual Studio Enterprise 18.10, CMake 4.4.3, Ninja
+1.13.2), and `windows-2022` is now a separate label rather than the default. The
+first CI run failed before compiling anything for exactly this reason:
+`CMakePresets.json` named `"generator": "Visual Studio 17 2022"`, that generator
+no longer exists on the image, and configure died in one second with
+`Could not create named generator`.
+
+The fix is to name no generator at all. CMake's default on Windows is the newest
+Visual Studio it can find, which is also the one the image is built around, so
+the preset survives the next roll instead of breaking on it. `architecture: x64`
+stays explicit, because it encodes the x64-only invariant the engine rests on
+(`explorer.exe` cannot load a 32-bit module).
+
+Three consequences worth knowing:
+
+- **CMake rejects comments in preset files** — verified by running
+  `cmake --list-presets` against a commented file and watching it fail. The
+  rationale therefore lives here rather than inline in `CMakePresets.json`, whose
+  `description` field is the only annotation the schema allows.
+- **Vendored single headers do not arrive with the layout their docs assume.**
+  `third_party/doctest/doctest.h` is on the include path *as* that directory, so
+  the include is `<doctest.h>`. The canonical `<doctest/doctest.h>` spelling
+  implies a nested directory the vendoring never created, and the first build
+  after the generator fix would have failed on it.
+- **Job logs need a signed-in session; annotations do not.** A failure whose only
+  explanation sits in the log is invisible to a signed-out reviewer, so
+  `.github/ci-annotate.sh` republishes the interesting lines of configure, build
+  and test as annotations on the run page.

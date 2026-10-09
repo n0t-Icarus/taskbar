@@ -75,7 +75,7 @@ SHA-256 in `third_party/doctest/README.md`. Confirm the banner is MIT.
 ```cpp
 // tests/core/test_smoke.cpp
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include <doctest/doctest.h>
+#include <doctest.h>
 TEST_CASE("tests run") { CHECK(1 + 1 == 2); }
 ```
 

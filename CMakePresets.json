@@ -5,8 +5,7 @@
     {
       "name": "msvc-x64",
       "displayName": "MSVC x64 (Release)",
-      "description": "The engine is x64-only; explorer.exe cannot load a 32-bit module.",
-      "generator": "Visual Studio 17 2022",
+      "description": "The engine is x64-only; explorer.exe cannot load a 32-bit module. Naming no generator is deliberate: see docs/SPEC.md 10.6 - CMake picks the newest Visual Studio installed.",
       "architecture": { "value": "x64", "strategy": "set" },
       "binaryDir": "${sourceDir}/build/msvc-x64",
       "cacheVariables": {

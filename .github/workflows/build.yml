@@ -3,6 +3,12 @@ name: build
 # MSVC and the Windows 11 SDK are preinstalled on windows-latest, which is the
 # whole reason this exists: the engine is a native x64 DLL, and building it here
 # means nobody needs a multi-gigabyte local toolchain. See docs/SPEC.md 10.2.
+#
+# Nothing here pins a Visual Studio version, and that is a correction rather than
+# a style choice. This workflow used to rely on the preset naming "Visual Studio
+# 17 2022"; in 2026 windows-latest became the VS 2026 image, so the generator
+# stopped existing and the configure step died in one second without compiling
+# anything. docs/SPEC.md 10.6 has the details.
 on:
   push:
     branches: ["**"]
@@ -30,14 +36,51 @@ jobs:
           fi
           echo "src/core is Windows-free."
 
+      # Records the toolchain the image actually handed us, and fails loudly if
+      # it has no Visual Studio at all - which is the failure that cost a run.
+      # The generator is reported, not passed: CMake chooses the newest one it
+      # can find, and this says which that was.
+      - name: Select toolchain
+        shell: bash
+        run: |
+          set -eo pipefail
+          cmake --version | head -1
+          generator=$(cmake --help | grep -oE 'Visual Studio [0-9]+ [0-9]{4}' | head -1 || true)
+          if [ -z "$generator" ]; then
+            echo "::error::this runner offers CMake no Visual Studio generator"
+            exit 1
+          fi
+          echo "newest Visual Studio generator on this runner: $generator"
+
+      # configure/build/test are wrapped so a failure reaches the run page as an
+      # annotation. Job logs require a signed-in session; annotations do not, and
+      # a red run whose reason nobody can read is not a useful signal.
       - name: Configure
-        run: cmake --preset msvc-x64
+        shell: bash
+        run: |
+          set -eo pipefail
+          if ! cmake --preset msvc-x64 2>&1 | tee configure.log; then
+            bash .github/ci-annotate.sh configure.log
+            exit 1
+          fi
 
       - name: Build
-        run: cmake --build --preset msvc-x64
+        shell: bash
+        run: |
+          set -eo pipefail
+          if ! cmake --build --preset msvc-x64 2>&1 | tee build.log; then
+            bash .github/ci-annotate.sh build.log
+            exit 1
+          fi
 
       - name: Test
-        run: ctest --preset msvc-x64 --output-on-failure
+        shell: bash
+        run: |
+          set -eo pipefail
+          if ! ctest --preset msvc-x64 --output-on-failure 2>&1 | tee ctest.log; then
+            bash .github/ci-annotate.sh ctest.log
+            exit 1
+          fi
 
       # Proves the DLL is a real x64 module with a working export table before
       # Task 11 depends on that.
