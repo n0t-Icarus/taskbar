@@ -73,11 +73,14 @@ jobs:
             exit 1
           fi
 
+      # --no-tests=error is explicit on purpose: it is the difference between
+      # "the suite passed" and "the suite ran", and a build that quietly stops
+      # registering tests must not stay green.
       - name: Test
         shell: bash
         run: |
           set -eo pipefail
-          if ! ctest --preset msvc-x64 --output-on-failure 2>&1 | tee ctest.log; then
+          if ! ctest --preset msvc-x64 --output-on-failure --no-tests=error 2>&1 | tee ctest.log; then
             bash .github/ci-annotate.sh ctest.log
             exit 1
           fi
