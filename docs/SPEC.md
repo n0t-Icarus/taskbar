@@ -477,5 +477,11 @@ Three consequences worth knowing:
   after the generator fix would have failed on it.
 - **Job logs need a signed-in session; annotations do not.** A failure whose only
   explanation sits in the log is invisible to a signed-out reviewer, so
-  `.github/ci-annotate.sh` republishes the interesting lines of configure, build
-  and test as annotations on the run page.
+  `.github/ci-annotate.sh` republishes the interesting lines of configure, build,
+  test and the DLL inspection as annotations on the run page.
+- **CI and the user run the same DLL check.** The inspection step calls
+  `tools/verify_engine_dll.py --expect-export TS_AbiVersion`, the same command
+  §9's manual path has you run on the downloaded artifact. It asserts x64 *and*
+  the exported entry point, which the hand-rolled PowerShell PE check it replaced
+  claimed to do but did not - a passing CI run would have proved the machine
+  type and nothing about the export table.

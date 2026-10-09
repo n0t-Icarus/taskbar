@@ -82,23 +82,25 @@ jobs:
             exit 1
           fi
 
-      # Proves the DLL is a real x64 module with a working export table before
-      # Task 11 depends on that.
+      # Proves the DLL is a real x64 module *carrying the entry point the
+      # control surface calls*, before Task 7 onwards depends on either. The
+      # x64 check alone was not enough: a 32-bit or truncated engine fails
+      # inside explorer as an opaque ERROR_BAD_EXE_FORMAT, and a missing export
+      # fails only when the verb is first invoked.
+      #
+      # This runs the same verifier the README tells you to run on the
+      # downloaded artifact, so CI and the user check the identical thing rather
+      # than two hand-rolled PE readers that could drift apart.
       - name: Inspect the engine DLL
-        shell: pwsh
+        shell: bash
         run: |
-          $dll = "build/msvc-x64/dist/TaskbarStyler.dll"
-          if (-not (Test-Path $dll)) { throw "engine DLL was not produced" }
-          $bytes = [IO.File]::ReadAllBytes($dll)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0x8664) {
-            # Format first: `throw "..." -f $x` parses the -f as a separate
-            # statement, so the message would be thrown unformatted.
-            $msg = "engine is not x64 (machine 0x{0:X4})" -f $machine
-            throw $msg
-          }
-          Write-Host "TaskbarStyler.dll is x64 ($((Get-Item $dll).Length) bytes)"
+          set -eo pipefail
+          if ! python tools/verify_engine_dll.py \
+                 build/msvc-x64/dist/TaskbarStyler.dll \
+                 --expect-export TS_AbiVersion 2>&1 | tee inspect.log; then
+            bash .github/ci-annotate.sh inspect.log 'FAIL|does not exist|error'
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
